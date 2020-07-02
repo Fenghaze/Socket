@@ -31,14 +31,14 @@ int main()
     }
 
     while (1)
-    {  
+    {
         char sendbuf[BUFSIZ];
         // 从终端输入请求命令
         fgets(sendbuf, sizeof(sendbuf), stdin);
         // 处理请求
         if (strcmp(sendbuf, "exit\n") == 0)
             break;
-        else if(strcmp(sendbuf, "login\n") == 0)
+        else if (strcmp(sendbuf, "login\n") == 0)
         {
             Login login = {"小红", "12345"};
             DataHeader hd = {sizeof(Login), CMD_LOGIN};
@@ -47,15 +47,29 @@ int main()
             // 再发包体
             send(cfd, &login, sizeof(Login), 0);
             // 接收服务器返回的数据
-            recv(cfd, )
+            DataHeader retheader;
+            LoginResult ret;
+            recv(cfd, &retheader, sizeof(DataHeader), 0);
+            recv(cfd, &ret, sizeof(LoginResult), 0);
+            printf("登录状态：%d\n", ret.result);
         }
-        else if(strcmp(sendbuf, "logout\n") == 0)
+        else if (strcmp(sendbuf, "logout\n") == 0)
         {
-            Logout logout = {"小红"}
+            Logout logout = {"小红"};
+            DataHeader hd = {sizeof(Logout), CMD_LOGOUT};
+            // 先发包头
+            send(cfd, &hd, sizeof(DataHeader), 0);
+            // 再发包体
+            send(cfd, &logout, sizeof(Logout), 0);
+            // 接收服务器返回的数据
+            DataHeader retheader;
+            LogoutResult ret;
+            recv(cfd, &retheader, sizeof(DataHeader), 0);
+            recv(cfd, &ret, sizeof(LogoutResult), 0);
+            printf("登出状态：%d\n", ret.result);
         }
         else
             printf("type error!\n");
-        
     }
 
     close(cfd);

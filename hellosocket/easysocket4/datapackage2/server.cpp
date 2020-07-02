@@ -60,27 +60,38 @@ int main()
         // 5、接收客户端发送的登录数据
         DataHeader header = {};
         int len = recv(cfd, &header, sizeof(DataHeader), 0);
-        printf("数据包长度：%d\n", header.dataLength);
-        printf("收到命令：%s\n", header.cmd);
+        if (len <= 0)
+        {
+            printf("client quit\n");
+            break;   /* code */
+        }
         // 6、处理请求
         switch (header.cmd)
         {
         case CMD_LOGIN:
         {
             Login login = {};
-            recv(cfd, &login, sizeof(Login), 0);
-            LoginResult ret = {0};
-            send(cfd, &header, sizeof(DataHeader), 0);
-            send(cfd, &ret, sizeof(LoginResult), 0);
+            // 接收客户端发送的登录信息
+            recv(cfd, (char *)&login+sizeof(DataHeader), sizeof(Login)-sizeof(DataHeader), 0);
+            printf("数据包长度：%d\n", login.dataLength);
+            printf("收到命令：%d\n", login.cmd);
+            printf("username=%s\tpassword=%s\n", login.UserName, login.PassWord);
+            // 返回登录状态
+            LoginResult ret;
+            send(cfd, (char *)&ret, sizeof(LoginResult), 0);
             break;
         }
         case CMD_LOGOUT:
         {
             Logout logout = {};
-            recv(cfd, &logout, sizeof(Logout), 0);
-            LogoutResult ret = {1};
-            send(cfd, &header, sizeof(DataHeader), 0);
-            send(cfd, &ret, sizeof(LogoutResult), 0);
+            // 接收客户端发送的登出信息
+            recv(cfd, (char *)&logout+sizeof(DataHeader), sizeof(Logout)-sizeof(DataHeader), 0);
+            printf("数据包长度：%d\n", logout.dataLength);
+            printf("收到命令：%d\n", logout.cmd);
+            printf("username=%s\n", logout.UserName);
+            // 返回登出状态
+            LogoutResult ret;
+            send(cfd, (char *)&ret, sizeof(LogoutResult), 0);
             break;
         }
         default:
