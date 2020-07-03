@@ -16,6 +16,11 @@ enum CMD
 // 包头
 struct DataHeader
 {
+    DataHeader()
+    {
+        dataLength = sizeof(DataHeader);
+        cmd = CMD_ERROR;
+    }
     short   dataLength; // 数据包长度
     short   cmd;        // 命令
 };
@@ -30,6 +35,7 @@ struct Login: public DataHeader // 继承包头
     }
     char UserName[32];  // 登录用户名
     char PassWord[32];  // 登录密码
+    char data[932];//用于测试
 };
 
 
@@ -52,6 +58,7 @@ struct LoginResult: public DataHeader
         result = 0;
     }   /* data */
     int result;
+    int data[992];//用于测试
 };
 
 struct LogoutResult: public DataHeader

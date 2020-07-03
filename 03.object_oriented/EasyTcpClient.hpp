@@ -16,7 +16,10 @@ class EasyTcpClient
 {
 private:
     int cfd;
-    struct sockaddr_in laddr;
+    // 第二缓冲区
+    char szRecv[10240];
+    char msgBuf[10240 * 10];
+    int lastPos = 0;
 
 public:
     EasyTcpClient()
@@ -41,17 +44,19 @@ public:
             printf("close old connect...\n");
             closeSocket();
         }
-        if (cfd = socket(AF_INET, SOCK_STREAM, 0) < 0)
+        cfd = socket(AF_INET, SOCK_STREAM, 0);
+        if (cfd < 0)
         {
             perror("socket()");
             return -1;
         }
-        return cfd;
+        return 0;
     }
 
     // 连接服务端
     int Connect(char *ip, short port)
     {
+        struct sockaddr_in laddr;
         if (cfd == INVALID_SOCKET)
             initSocket();
 
@@ -83,7 +88,7 @@ public:
             fd_set readfds;
             FD_ZERO(&readfds);
             FD_SET(cfd, &readfds);
-            timeval t = {2, 0};
+            timeval t = {1, 0};
             int n = select(cfd + 1, &readfds, NULL, NULL, &t);
             if (n < 0)
             {
@@ -108,17 +113,31 @@ public:
     int recvData(int cfd)
     {
         // 接收服务端发送的数据
-        char szRecv[4096];
-        int len = recv(cfd, &szRecv, sizeof(DataHeader), 0);
-        DataHeader *header = (DataHeader *)szRecv;
+        int len = recv(cfd, &szRecv, 10240, 0);
         if (len <= 0)
         {
-            printf("connect error!\n");
+            printf("client【%d】 quit\n", cfd);
             return -1;
         }
-        recv(cfd, szRecv + sizeof(DataHeader), header->dataLength - sizeof(DataHeader), 0);
-        // 处理数据
-        OnNetMsg(header);
+        memcpy(msgBuf + lastPos, szRecv, len);
+        // 更新msgBuf的数据长度
+        lastPos += len;
+        // 判断缓冲区的数据是否大于消息头
+        while (lastPos >= sizeof(DataHeader))
+        {
+            DataHeader *header = (DataHeader *)msgBuf;
+            if (lastPos >= header->dataLength)
+            {
+                lastPos -= header->dataLength;
+                OnNetMsg(header);
+                // 处理完一条消息后，将缓冲区的数据前移
+                memcpy(msgBuf, msgBuf + header->dataLength, lastPos);
+            }
+            else
+            {
+                break;
+            }
+        }
         return 0;
     }
 
@@ -132,38 +151,47 @@ public:
         {
             // 接收客户端发送的登录信息
             LoginResult *ret = (LoginResult *)header;
-            printf("数据包长度：%d\t收到命令：%d\n", ret->dataLength, ret->cmd);
+            printf("数据包长度：%d\t收到命令：%d\t", ret->dataLength, ret->cmd);
             printf("登录状态：%d\n", ret->result);
             break;
         }
         case CMD_LOGOUT_RES:
         {
             LogoutResult *ret = (LogoutResult *)header;
-            printf("数据包长度：%d\t收到命令：%d\n", ret->dataLength, ret->cmd);
+            printf("数据包长度：%d\t收到命令：%d\t", ret->dataLength, ret->cmd);
             printf("登出状态：%d\n", ret->result);
             break;
         }
         case CMD_NEW_USER_JOIN:
         {
             NewUserJoin *new_user = (NewUserJoin *)header;
-            printf("数据包长度：%d\t收到命令：%d\n", new_user->dataLength, new_user->cmd);
+            printf("数据包长度：%d\t收到命令：%d\t", new_user->dataLength, new_user->cmd);
             printf("new client join【%d】\n", new_user->sock);
             break;
         }
-        default:
+        case CMD_ERROR:
+        {
+            printf("收到错误消息，数据包长度：%d\n", header->dataLength);
             break;
+        }
+        default:
+        {
+            printf("收到未知消息，数据包长度：%d\n", header->dataLength);
+            break;
+        }
+            
         }
     }
 
     // 发送数据
     int sendData(DataHeader *header)
     {
-        if(isRun() && header)
+        if (isRun() && header)
         {
             send(cfd, (char *)header, header->dataLength, 0);
             return 0;
         }
-        retrun -1;
+        return -1;
     }
 
     // 判断socket是否在工作

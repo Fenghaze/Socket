@@ -88,7 +88,7 @@ struct msg_st
 
 
 
-## 粘包、少包
+# ==粘包、少包==
 
 粘包：正常一次传输500B，但是因为网络状况，某一次接收到了1000B的数据，发送了两个数据包但是一次性接收到了，这就是粘包现象
 
@@ -102,5 +102,112 @@ struct msg_st
 
 
 
+## 原理
 
+前提：socket指向内核中的两个缓冲区（读/写缓冲区）
+
+
+
+发送端：使用`send()/write()`发送一段数据，发送缓冲区（写缓冲区）存储着要发送的数据
+
+**经过网络传输层传输缓冲区的数据**
+
+接收端：接收缓冲区（读缓冲区）存储着发送端发送的数据，使用`recv()/read()`从接收缓冲区读取一段数据
+
+
+
+在传输时，会出现以下情况：
+
+当发送端不断的快速发送数据，接收缓冲区很快填满，而接收端每次只`recv`一段的数据，且**接收速度小于发送速度**，此时缓冲区溢出，发送端无法发送数据，造成网络阻塞现象
+
+
+
+最好的情况是：
+
+缓冲区有多少数据，接收端就尽快的将这些数据读取出来
+
+
+
+==实现方法：==
+
+借助**第二缓冲区**，即定义一个足够大的缓冲区，将`recv()`从接收缓冲区读取的数据存放到这个第二缓冲区中
+
+```c++
+char szRecv[40960];
+int len = recv(fd, szRecv, 40960, 0);
+```
+
+
+
+==存在问题：==
+
+将接收缓冲区的所有数据存放到第二缓冲区后，接收缓冲区虽然被及时清空了，但是第二缓冲区中的数据可能是粘包或少包的，即无法区分这些数据是来自于哪一个socket，因此需要**解决粘包或少包的问题**
+
+
+
+## 解决客户端粘包、少包
+
+定义一个第二缓冲区A，存放`recv()`接收的数据
+
+定义一个缓冲区B（远大于缓冲区A），将第二缓冲区A中的数据拷贝到缓冲区B中
+
+==注意：==
+
+- 拷贝的长度是真实接收到的长度
+- 拷贝时，缓冲区B中的数据是append（因此需要记录每一次拷贝后缓冲区B的长度）
+
+> 详情见：./object_oriented/EasyTcpClient.hpp
+
+```c++
+char szRecv[10240];
+char msgBuf[10240*10];
+int lastPos = 0;	// 记录msgBuf有效字符串长度
+
+// 接收数据
+int recvData(int cfd)
+{
+    // 接收服务端发送的数据，存放到第二缓冲区 szRecv
+    int len = recv(cfd, &szRecv, 10240, 0);
+    if (len <= 0)
+    {
+        printf("client【%d】 quit\n", cfd);
+        return -1;
+    }
+    printf("len=%d\n", len);
+    // 将第二缓冲区读取到的数据append到缓冲区msgBuf
+    	memcpy(msgBuf+lastPos, szRecv, len);
+    // 更新msgBuf的数据长度
+    lastPos += len;
+    // 循环判断缓冲区的数据是否大于消息头（粘包：可能发送多个数据包）
+    while (lastPos > sizeof(DataHeader))
+    {
+        // 将缓冲区的数据类型转换为消息头类型
+        DataHeader *header = (DataHeader *)msgBuf;
+        // 
+        if (lastPos > header->dataLength)
+        {
+            lastPos -= header->dataLength;
+            OnNetMsg(header);
+            // 处理完一个完整数据包后，将缓冲区的数据前移
+            memcpy(msgBuf, msgBuf+header->dataLength, lastPos);
+        }
+        else	//少包，跳出循环
+			break;
+    }
+}
+```
+
+
+
+## 解决服务端粘包、少包
+
+对于客户端而言，它与服务端是一对一的关系，因此只需要建立2个缓冲区
+
+对于服务端而言，它与客户端是一对多的关系，因此需要为每个客户端建立2个缓冲区
+
+
+
+==方法：== **将客户端的socket封装成一个对象，里面包含socket、缓冲区、lastPos**
+
+> 详情见：./object_oriented/EasyTcpServer.hpp
 
