@@ -7,7 +7,7 @@
 #include <stdlib.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
-#include "proto.h"
+#include "../server/proto.h"
 #include <unistd.h>
 #include <string.h>
 

@@ -8,9 +8,9 @@
 
 #include <thread>
 #include "EasyTcpClient.hpp"
-
 using namespace std;
 
+bool flag = true;
 static void cmdThread(EasyTcpClient *client)
 {
     while (1)
@@ -45,27 +45,49 @@ static void cmdThread(EasyTcpClient *client)
 
 int main()
 {
-    EasyTcpClient client;
-    client.initSocket();
-    if (client.Connect("127.0.0.1", 4567) < 0)
-        exit(1);
+    const int count = 3;
+    EasyTcpClient *client[count];
+    for (int i = 0; i < count; i++)
+    {
+        client[i] = new EasyTcpClient();
+        client[i]->initSocket();
+        client[i]->Connect("127.0.0.1", SERVERPORT);
+        // 启动输入命令的线程
+        thread t1(cmdThread, client[i]);
+        t1.detach(); //线程分离
+    }
 
-    // 启动输入命令的线程
-    thread t1(cmdThread, &client);
-    t1.detach(); //线程分离
     
+
     Login login;
     strcpy(login.UserName, "xiaohong");
     strcpy(login.PassWord, "ferwr");
-    
-    while (client.isRun())
+    int flag_num = 0;
+    while (flag)
     {
-        if(client.OnRun()==false)
-            break;
-        client.sendData(&login);
+        for (int i = 0; i < count; i++)
+        {
+            if (client[i]->OnRun() == false)
+            {
+                flag_num++;
+                if(flag_num == count) 
+                {
+                    flag=false;
+                    break;
+                }
+                else
+                    continue;
+            }
+            client[i]->sendData(&login);
+            
+        }
+        
     }
 
-    client.closeSocket();
+    for (int i = 0; i < count; i++)
+    {
+        client[i]->closeSocket();
+    }
 
     return 0;
 }

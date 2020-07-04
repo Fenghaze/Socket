@@ -12,7 +12,7 @@
 #include <string.h>
 #include <string>
 #include <vector>
-#include"../04.timer/CELLTimestamp.h"
+#include"../../04.timer/CELLTimestamp.h"
 #define INVALID_SOCKET -1
 #define IPSIZE 40
 
@@ -153,7 +153,7 @@ public:
 
         // 打印客户端信息
         inet_ntop(AF_INET, &raddr.sin_addr, ipstr, sizeof(ipstr));
-        printf("client[%s:%d]\n", ipstr, ntohs(raddr.sin_port));
+       // printf("client[%s:%d]\n", ipstr, ntohs(raddr.sin_port));
 
         // 判断溢出
         if (g_clients.size() == FD_SETSIZE)
