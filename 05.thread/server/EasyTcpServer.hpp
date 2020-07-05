@@ -12,10 +12,13 @@
 #include <string.h>
 #include <string>
 #include <vector>
-#include"../../04.timer/CELLTimestamp.h"
+#include <thread>
+#include <mutex>
+#include "../../04.timer/CELLTimestamp.h"
+#include <atomic>
 #define INVALID_SOCKET -1
 #define IPSIZE 40
-
+#define SERVER_TNUM 1 //服务线程个数
 class ClientSocket
 {
 private:
@@ -48,6 +51,186 @@ public:
     }
 };
 
+class CellServer
+{
+private:
+    int lfd;
+    std::vector<ClientSocket *> g_clients; // 客户端cfd数组
+    char szRecv[10240];
+    std::thread *server_thread;
+    std::vector<ClientSocket *> g_clientsBuf; // 缓冲队列，从这里面获取cfd
+    std::mutex mut;
+
+public:
+    // 添加计数器
+    std::atomic<int> recvCount;
+
+    CellServer(int lfd)
+    {
+        this->lfd = lfd;
+        server_thread = nullptr;
+        recvCount = 0;
+    }
+
+    ~CellServer()
+    {
+    }
+    // 判断socket是否在工作
+    bool isRun()
+    {
+        return lfd != INVALID_SOCKET;
+    }
+    // 处理数据
+    void OnNetMsg(DataHeader *header, int cfd)
+    {
+        recvCount++;
+        switch (header->cmd)
+        {
+        case CMD_LOGIN:
+        {
+            Login *login = (Login *)header;
+            // 接收客户端发送的登录信息
+            //printf("-----------socket=%d----------\n", cfd);
+            // printf("数据包长度：%d\t收到命令：%d\n", login->dataLength, login->cmd);
+            //printf("username=%s\tpassword=%s\n", login->UserName, login->PassWord);
+            // 返回登录状态
+            // LoginResult ret;
+            // sendData(&ret, cfd);
+            break;
+        }
+        case CMD_LOGOUT:
+        {
+            Logout *logout = (Logout *)header;
+            // 接收客户端发送的登出信息
+            //   printf("-----------socket=%d----------\n", cfd);
+            //  printf("数据包长度：%d\t收到命令：%d\n", logout->dataLength, logout->cmd);
+            //   printf("username=%s\n", logout->UserName);
+            // 返回登出状态
+            //  LogoutResult ret;
+            // sendData(&ret, cfd);
+            break;
+        }
+        default:
+        {
+            printf("收到未知消息，数据包长度：%d\n", header->dataLength);
+            // DataHeader ret;
+            //sendData(&ret, cfd);
+            break;
+        }
+        }
+    }
+    // 接收数据,处理粘包、少包问题
+    int recvData(ClientSocket *client, int cfd)
+    {
+        // 接收客户端发送的登录数据
+        int len = recv(cfd, &szRecv, 10240, 0);
+        if (len <= 0)
+        {
+            printf("client【%d】 quit\n", cfd);
+            return -1;
+        }
+        memcpy(client->getmsgBuf() + client->getlastPos(), szRecv, len);
+        // 更新msgBuf的数据长度
+        client->setlastPos(client->getlastPos() + len);
+        // 判断缓冲区的数据是否大于消息头
+        while (client->getlastPos() >= sizeof(DataHeader))
+        {
+            DataHeader *header = (DataHeader *)client->getmsgBuf();
+            if (client->getlastPos() >= header->dataLength)
+            {
+                int cur_len = client->getlastPos() - header->dataLength;
+                OnNetMsg(header, cfd);
+                // 处理完一条消息后，将缓冲区的数据前移
+                memcpy(client->getmsgBuf(), client->getmsgBuf() + header->dataLength, cur_len);
+                client->setlastPos(cur_len);
+            }
+            else
+            {
+                break;
+            }
+        }
+        return 0;
+    }
+    bool OnRun(int tid)
+    {
+        printf("线程【%d】启动\n", tid);
+        while (isRun())
+        {
+            // 将缓冲队列的cfd加入到客户端cfd数组
+            if (g_clientsBuf.size() > 0)
+            {
+                std::lock_guard<std::mutex> lg(mut);
+                for (auto client : g_clientsBuf)
+                {
+                    g_clients.push_back(client);
+                }
+                g_clientsBuf.clear();
+            }
+            if (g_clients.empty())
+            {
+                std::chrono::milliseconds t(1);
+                std::this_thread::sleep_for(t);
+                continue;
+            }
+            fd_set readfds;
+            FD_ZERO(&readfds);
+            int maxfd = g_clients[0]->getSock();
+            // 监听所有客户端cfd的读写事件
+            for (int n = (int)g_clients.size() - 1; n >= 0; n--)
+            {
+                FD_SET(g_clients[n]->getSock(), &readfds);
+                if (maxfd < g_clients[n]->getSock())
+                {
+                    maxfd = g_clients[n]->getSock();
+                }
+            }
+            // 创建select,监听集合中的socket
+            int ret = select(maxfd + 1, &readfds, NULL, NULL, NULL);
+            if (ret < 0)
+            {
+                perror("select()");
+                close(lfd);
+                return -1;
+            }
+            // 处理每个客户端的请求
+            for (int n = (int)g_clients.size() - 1; n >= 0; n--)
+            {
+                int cfd = g_clients[n]->getSock();
+                if (FD_ISSET(cfd, &readfds))
+                {
+                    if (-1 == recvData(g_clients[n], cfd))
+                    {
+                        auto iter = g_clients.begin() + n;
+                        if (iter != g_clients.end())
+                        {
+                            delete g_clients[n];
+                            g_clients.erase(iter);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 缓冲队列一次只允许一个线程来操作
+    void addClient(ClientSocket *client)
+    {
+        std::lock_guard<std::mutex> lg(mut);
+        g_clientsBuf.push_back(client);
+    }
+
+    void StartThread(int tid)
+    {
+        server_thread = new std::thread(std::mem_fun(&CellServer::OnRun), this, tid);
+    }
+
+    // 获得数组中的cfd个数
+    size_t getClientSize()
+    {
+        return g_clients.size() + g_clientsBuf.size();
+    }
+};
+
 class EasyTcpServer
 {
 private:
@@ -56,12 +239,12 @@ private:
     fd_set readfds, writefds;
     socklen_t raddr_len;
     std::vector<ClientSocket *> g_clients;
-    // 第二缓冲区
-    char szRecv[10240];
     // 添加计时器
     CELLTimestamp timer;
     // 添加计数器
     int recvCount;
+    std::vector<CellServer *> cell_servers;
+
 public:
     EasyTcpServer()
     {
@@ -133,6 +316,20 @@ public:
         return 0;
     }
 
+    void addClient2Buf(ClientSocket *client)
+    {
+        g_clients.push_back(client);
+        auto minServer = cell_servers[0];
+        for (auto server : cell_servers)
+        {
+            if (minServer->getClientSize() > server->getClientSize())
+            {
+                minServer = server;
+            }
+        }
+        minServer->addClient(client);
+    }
+
     // 接受新客户端连接请求，并将该客户端加入动态数组
     int Accept()
     {
@@ -148,12 +345,9 @@ public:
         new_user.sock = cfd;
         char ipstr[IPSIZE];
 
-        // 向所有连接的客户端发送新的客户端消息
-        sendData2All(&new_user);
-
         // 打印客户端信息
         inet_ntop(AF_INET, &raddr.sin_addr, ipstr, sizeof(ipstr));
-       // printf("client[%s:%d]\n", ipstr, ntohs(raddr.sin_port));
+        printf("client[%s:%d]\n", ipstr, ntohs(raddr.sin_port));
 
         // 判断溢出
         if (g_clients.size() == FD_SETSIZE)
@@ -161,78 +355,45 @@ public:
             fputs("too many clients\n", stderr);
             return -1;
         }
-        // 向动态数组中加入新的客户端
-        g_clients.push_back(new ClientSocket(cfd));
+        // 向缓冲区中加入新的客户端
+        addClient2Buf(new ClientSocket(cfd));
         return 0;
     }
 
-    // 监听socket
+    // 启动服务线程
+    void StartServers()
+    {
+        for (int i = 0; i < SERVER_TNUM; i++)
+        {
+            auto server = new CellServer(lfd);
+            cell_servers.push_back(server);
+            server->StartThread(i+1);
+        }
+    }
+
+    // 监听是否有新的客户端请求连接
     bool OnRun()
     {
         if (isRun())
         {
-            int flag = true;
+            time4msg();
             FD_ZERO(&readfds);
             FD_ZERO(&writefds);
             // 监听服务端的读事件，用于判断是否有新的客户端请求连接
             FD_SET(lfd, &readfds);
-            int maxfd = -1;
-            // 监听所有socket的读写事件
-            for (size_t i = 0; i < g_clients.size(); i++)
-            {
-                FD_SET(g_clients[i]->getSock(), &readfds);
-            }
-
-            // 创建select,监听集合中的socket
-            if (g_clients.size())
-                maxfd = g_clients.back()->getSock(); // 最大文件描述符
-            else
-                maxfd = lfd;
             timeval t = {1, 0};
-            int n = select(maxfd + 1, &readfds, NULL, NULL, &t);
+            int n = select(lfd + 1, &readfds, NULL, NULL, &t);
             if (n < 0)
             {
                 perror("select()");
                 closeSocket();
-                return -1;
+                return false;
             }
-            // 当有新客户端要加入时，监听到服务端socket可读，此时接受客户端连接
             if (FD_ISSET(lfd, &readfds))
             {
                 Accept();
-                if (--n == 0) // 处理掉一个监听事件
-                    flag = false;
+                return true;
             }
-
-            // 处理每个客户端的请求
-            if (flag)
-            {
-                int i = 0;
-                auto it = g_clients.begin();
-                while (it < g_clients.end())
-                {
-                    int cfd = (**it).getSock();
-                    // 如果监听到事件，处理请求
-                    if (FD_ISSET(cfd, &readfds))
-                    {
-                        // 客户端退出，删除这个客户端，不再监听
-                        if (recvData(*it, cfd) < 0)
-                        {
-                            close(cfd);
-                            // 释放当前客户端开辟的空间
-                            delete g_clients[distance(g_clients.begin(), it)];
-                            FD_CLR(cfd, &readfds);
-                            it = g_clients.erase(it);
-                        }
-                        else
-                            it++;
-                        if (--n == 0)
-                            break;
-                    }
-                    it++;
-                }
-            }
-         //   printf("Spare time: Server working function...\n");
         }
         return false;
     }
@@ -257,86 +418,20 @@ public:
         }
     }
 
-    // 接收数据,处理粘包、少包问题
-    int recvData(ClientSocket *client, int cfd)
+    // 打印消息
+    void time4msg()
     {
-        recvCount++;
         auto t1 = timer.getElapsedSecond();
         if (t1 >= 1.0)
-        {  
-            printf("time【%lfs】,socket【%d】,当前客户端数量【%ld】,收到数据包个数【%d】\n",t1, lfd, g_clients.size(),recvCount);   /* code */
-            recvCount = 0;
+        {
+            int allcount = 0;
+            for (auto server : cell_servers)
+            {
+                allcount += server->recvCount;
+                server->recvCount = 0;
+            }
+            printf("time【%lfs】,socket【%d】,当前客户端数量【%ld】,收到数据包个数【%d】\n", t1, lfd, g_clients.size(), allcount);
             timer.update();
-        }
-        
-        // 接收客户端发送的登录数据
-        int len = recv(cfd, &szRecv, 10240, 0);
-        if (len <= 0)
-        {
-            printf("client【%d】 quit\n", cfd);
-            return -1;
-        }
-        memcpy(client->getmsgBuf() + client->getlastPos(), szRecv, len);
-        // 更新msgBuf的数据长度
-        client->setlastPos(client->getlastPos() + len);
-        // 判断缓冲区的数据是否大于消息头
-        while (client->getlastPos() >= sizeof(DataHeader))
-        {
-            DataHeader *header = (DataHeader *)client->getmsgBuf();
-            if (client->getlastPos() >= header->dataLength)
-            {
-                int cur_len = client->getlastPos() - header->dataLength;
-                OnNetMsg(header, cfd);
-                // 处理完一条消息后，将缓冲区的数据前移
-                memcpy(client->getmsgBuf(), client->getmsgBuf() + header->dataLength, cur_len);
-                client->setlastPos(cur_len);
-            }
-            else
-            {
-                break;
-            }
-        }
-        LoginResult ret;
-        sendData(&ret, cfd);
-        return 0;
-    }
-
-    // 处理数据
-    void OnNetMsg(DataHeader *header, int cfd)
-    {
-        switch (header->cmd)
-        {
-        case CMD_LOGIN:
-        {
-            Login *login = (Login *)header;
-            // 接收客户端发送的登录信息
-           // printf("-----------socket=%d----------\n", cfd);
-           // printf("数据包长度：%d\t收到命令：%d\n", login->dataLength, login->cmd);
-          //  printf("username=%s\tpassword=%s\n", login->UserName, login->PassWord);
-            // 返回登录状态
-            LoginResult ret;
-            sendData(&ret, cfd);
-            break;
-        }
-        case CMD_LOGOUT:
-        {
-            Logout *logout = (Logout *)header;
-            // 接收客户端发送的登出信息
-         //   printf("-----------socket=%d----------\n", cfd);
-          //  printf("数据包长度：%d\t收到命令：%d\n", logout->dataLength, logout->cmd);
-         //   printf("username=%s\n", logout->UserName);
-            // 返回登出状态
-            LogoutResult ret;
-            sendData(&ret, cfd);
-            break;
-        }
-        default:
-        {
-            printf("收到未知消息，数据包长度：%d\n", header->dataLength);
-            // DataHeader ret;
-            //sendData(&ret, cfd);
-            break;
-        }
         }
     }
 

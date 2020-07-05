@@ -50,9 +50,12 @@ public:
             perror("socket()");
             return -1;
         }
-        return 0;
+        return cfd;
     }
-
+    int getSocket()
+    {
+        return cfd;
+    }
     // 连接服务端
     int Connect(char *ip, short port)
     {

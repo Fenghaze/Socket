@@ -149,7 +149,7 @@ public:
         char ipstr[IPSIZE];
 
         // 向所有连接的客户端发送新的客户端消息
-        sendData2All(&new_user);
+        //sendData2All(&new_user);
 
         // 打印客户端信息
         inet_ntop(AF_INET, &raddr.sin_addr, ipstr, sizeof(ipstr));
@@ -260,14 +260,6 @@ public:
     // 接收数据,处理粘包、少包问题
     int recvData(ClientSocket *client, int cfd)
     {
-        recvCount++;
-        auto t1 = timer.getElapsedSecond();
-        if (t1 >= 1.0)
-        {  
-            printf("time【%lfs】,socket【%d】,当前客户端数量【%ld】,收到数据包个数【%d】\n",t1, lfd, g_clients.size(),recvCount);   /* code */
-            recvCount = 0;
-            timer.update();
-        }
         
         // 接收客户端发送的登录数据
         int len = recv(cfd, &szRecv, 10240, 0);
@@ -304,6 +296,14 @@ public:
     // 处理数据
     void OnNetMsg(DataHeader *header, int cfd)
     {
+        recvCount++;
+        auto t1 = timer.getElapsedSecond();
+        if (t1 >= 1.0)
+        {  
+            printf("time【%lfs】,socket【%d】,当前客户端数量【%ld】,收到数据包个数【%d】\n",t1, lfd, g_clients.size(),recvCount);   /* code */
+            recvCount = 0;
+            timer.update();
+        }
         switch (header->cmd)
         {
         case CMD_LOGIN:
@@ -314,8 +314,8 @@ public:
            // printf("数据包长度：%d\t收到命令：%d\n", login->dataLength, login->cmd);
           //  printf("username=%s\tpassword=%s\n", login->UserName, login->PassWord);
             // 返回登录状态
-            LoginResult ret;
-            sendData(&ret, cfd);
+          //  LoginResult ret;
+           // sendData(&ret, cfd);
             break;
         }
         case CMD_LOGOUT:
@@ -326,8 +326,8 @@ public:
           //  printf("数据包长度：%d\t收到命令：%d\n", logout->dataLength, logout->cmd);
          //   printf("username=%s\n", logout->UserName);
             // 返回登出状态
-            LogoutResult ret;
-            sendData(&ret, cfd);
+           // LogoutResult ret;
+           // sendData(&ret, cfd);
             break;
         }
         default:

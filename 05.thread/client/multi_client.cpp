@@ -10,8 +10,8 @@
 #include <thread>
 #include "EasyTcpClient.hpp"
 using namespace std;
-#define TNUM   4 
-#define CLIENTS 1000 
+#define TNUM 4
+#define CLIENTS 10
 bool flag = true;
 EasyTcpClient *client[CLIENTS];
 static void cmdThread()
@@ -36,8 +36,19 @@ static void cmdThread()
 void sendThread(int tid)
 {
     int c = CLIENTS / TNUM;
-    int begin = (tid-1) *c;
-    int end = tid*c;
+    int begin = (tid - 1) * c;
+    int end = tid * c;
+    for (int i = begin; i < end; i++)
+    {
+        client[i] = new EasyTcpClient();
+    }
+    for (int i = begin; i < end; i++)
+    {
+        client[i]->initSocket();
+        client[i]->Connect("127.0.0.1", SERVERPORT);
+        printf("线程【%d】创建连接请求，cfd=【%d】\n", tid, client[i]->getSocket());
+    }
+
     Login login;
     strcpy(login.UserName, "xiaohong");
     strcpy(login.PassWord, "ferwr");
@@ -46,6 +57,7 @@ void sendThread(int tid)
     {
         for (int i = begin; i < end; i++)
         {
+            client[i]->sendData(&login);
             if (client[i]->OnRun() == false)
             {
                 flag_num++;
@@ -57,7 +69,6 @@ void sendThread(int tid)
                 else
                     continue;
             }
-            client[i]->sendData(&login);
         }
     }
     for (int i = begin; i < end; i++)
@@ -72,18 +83,15 @@ int main()
     thread t1(cmdThread);
     t1.detach();
 
-    for (int i = 0; i < CLIENTS; i++)
-    {
-        client[i] = new EasyTcpClient();
-        client[i]->initSocket();
-        client[i]->Connect("127.0.0.1", SERVERPORT);
-    }
     // 启动发送线程
     for (int i = 0; i < TNUM; i++)
     {
         thread t2(sendThread, i + 1);
-        t2.join(); 
+        t2.detach();
     }
-    
+
+    while (flag)
+        ;
+
     return 0;
 }
